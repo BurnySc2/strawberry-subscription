@@ -1,4 +1,3 @@
-import asyncio
 from typing import AsyncGenerator, Set
 
 import uvicorn
@@ -7,8 +6,10 @@ from loguru import logger
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 
+from broadcaster import Broadcast
+
 active_users: Set[str] = set()
-queue_user_joined: 'asyncio.Queue[str]' = asyncio.Queue()
+broadcast = Broadcast()
 
 
 @strawberry.type
@@ -21,33 +22,24 @@ class Query:
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    def chat_join_room(self, username: str) -> bool:
+    async def chat_join_room(self, username: str) -> bool:
         if username in active_users:
             return False
         active_users.add(username)
-        queue_user_joined.put_nowait(username)
+        await broadcast.publish("chatroom", username)
         return True
 
 
 @strawberry.type
 class Subscription:
     @strawberry.subscription
-    async def hello(self) -> AsyncGenerator[str, None]:
-        count = 0
-        while 1:
-            yield f'Subscription message {count}'
-            count += 1
-            await asyncio.sleep(1)
-
-    @strawberry.subscription
     async def chat_user_joined(self) -> AsyncGenerator[str, None]:
-        while 1:
-            if queue_user_joined.empty():
-                await asyncio.sleep(0.01)
-            else:
-                new_user = queue_user_joined.get_nowait()
-                logger.info(f'new user: {new_user}')
-                yield new_user
+        async with broadcast.subscribe(channel="chatroom") as subscriber:
+            logger.info("subscribed")
+            async for event in subscriber:
+                logger.info(event)
+                yield event.message
+        logger.info("unsubscribed")
 
 
 schema = strawberry.Schema(Query, mutation=Mutation, subscription=Subscription)
