@@ -39,7 +39,6 @@ class Subscriber:
 @dataclass
 class Broadcast:
     subscribers: Dict[str, Set[Queue]] = field(default_factory=dict)
-    published: Queue = Queue()
 
     @asynccontextmanager
     async def subscribe(self, channel: str) -> Subscriber:
