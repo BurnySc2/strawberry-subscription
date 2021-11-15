@@ -1,60 +1,53 @@
+from asyncio import Queue
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Set, Optional
-from asyncio import Queue
 
-from loguru import logger
+from typing import Any, AsyncIterator, Dict, Set
 
 
 @dataclass
-class Event:
+class BroadcastEvent:
     channel: str
     message: Any
 
 
-class Unsubscribed(Exception):
-    pass
-
-
 @dataclass
 class Subscriber:
-    queue: "Queue[Optional[Event]]" = field(default_factory=Queue)
+    queue: 'Queue[BroadcastEvent]' = field(default_factory=Queue)
 
-    async def __aiter__(self):
-        try:
-            while True:
-                item = await self.get()
-                yield item
-        except Unsubscribed:
-            pass
-        logger.info("unsubscribed")
+    async def __aiter__(self) -> AsyncIterator[BroadcastEvent]:
+        while True:
+            item = await self.get()
+            yield item
 
-    async def get(self) -> Event:
+    async def get(self) -> BroadcastEvent:
         item = await self.queue.get()
-        if item is None:
-            raise Unsubscribed()
         return item
 
 
 @dataclass
 class Broadcast:
     subscribers: Dict[str, Set[Queue]] = field(default_factory=dict)
+    published: Queue = Queue()
 
     @asynccontextmanager
-    async def subscribe(self, channel: str) -> Subscriber:
+    async def subscribe(self, channel: str) -> AsyncIterator[Subscriber]:
         subscriber = Subscriber()
         subscribers_set = self.subscribers.get(channel, set())
         subscribers_set.add(subscriber.queue)
         self.subscribers[channel] = subscribers_set
-        yield subscriber
-        # Remove subscriber on context close
+        try:
+            yield subscriber
+        finally:
+            # Remove subscriber on context close
+            await self._unsubscribe(channel=channel, subscriber=subscriber)
+
+    async def _unsubscribe(self, channel: str, subscriber: 'Subscriber'):
         self.subscribers[channel].remove(subscriber.queue)
         if not self.subscribers[channel]:
             del self.subscribers[channel]
-        await subscriber.queue.put(None)
-        logger.info("unsubscribed")
 
     async def publish(self, channel: str, message: Any):
-        event = Event(channel=channel, message=message)
+        event = BroadcastEvent(channel=channel, message=message)
         for subscriber_queue in self.subscribers.get(channel, set()):
             await subscriber_queue.put(event)

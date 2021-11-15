@@ -6,7 +6,7 @@ from loguru import logger
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 
-from broadcaster import Broadcast
+from broadcaster import Broadcast, Subscriber, BroadcastEvent
 
 active_users: Set[str] = set()
 broadcast = Broadcast()
@@ -34,12 +34,16 @@ class Mutation:
 class Subscription:
     @strawberry.subscription
     async def chat_user_joined(self) -> AsyncGenerator[str, None]:
+        subscriber: Subscriber
         async with broadcast.subscribe(channel="chatroom") as subscriber:
-            logger.info("subscribed")
-            async for event in subscriber:
-                logger.info(event)
-                yield event.message
-        logger.info("unsubscribed")
+            logger.info("Subscribed")
+            event: BroadcastEvent
+            try:
+                async for event in subscriber:
+                    logger.info(event)
+                    yield event.message
+            finally:
+                logger.info("Unsubscribed")
 
 
 schema = strawberry.Schema(Query, mutation=Mutation, subscription=Subscription)
